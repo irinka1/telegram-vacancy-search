@@ -1,0 +1,15 @@
+{
+  "name": "telegram-vacancy-miniapp",
+  "version": "1.0.0",
+  "description": "Telegram bot with mini app for vacancy search on work.ua and robota.ua",
+  "main": "bot.js",
+  "scripts": {
+    "start": "node bot.js"
+  },
+  "dependencies": {
+    "axios": "^1.7.2",
+    "cheerio": "^1.0.0",
+    "express": "^4.19.2",
+    "telegraf": "^4.16.3"
+  }
+}

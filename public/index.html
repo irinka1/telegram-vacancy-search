@@ -1,0 +1,51 @@
+<!DOCTYPE html>
+<html lang="ru">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Grow a Garden 2 - Поиск вакансий</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link href="https://fonts.googleapis.com/css2?family=Russo+One&family=Manrope:wght@400;600;700;800&display=swap" rel="stylesheet" />
+    <link rel="stylesheet" href="styles.css" />
+  </head>
+  <body>
+    <div class="bg-orb orb-1"></div>
+    <div class="bg-orb orb-2"></div>
+    <main class="app">
+      <section class="card">
+        <p class="badge">Миниапп Telegram</p>
+        <h1>Поиск вакансий в стиле Grow a Garden 2</h1>
+        <p class="subtitle">Заполни форму и бот пришлет вакансии из robota.ua и work.ua прямо в чат.</p>
+
+        <form id="search-form" class="form">
+          <label>
+            <span>Название вакансии</span>
+            <input type="text" name="vacancyTitle" value="Бухгалтер" required />
+          </label>
+
+          <label>
+            <span>Формат работы</span>
+            <select name="workType" required>
+              <option value="remote">Удаленная</option>
+              <option value="part-time">Частичная занятость</option>
+              <option value="any">Любой формат</option>
+            </select>
+          </label>
+
+          <label>
+            <span>Имя в Telegram</span>
+            <input type="text" name="telegramUsername" placeholder="@username" required />
+          </label>
+
+          <button type="submit">Искать вакансии</button>
+        </form>
+
+        <p id="status" class="status"></p>
+      </section>
+    </main>
+
+    <script src="https://telegram.org/js/telegram-web-app.js"></script>
+    <script src="app.js"></script>
+  </body>
+</html>
