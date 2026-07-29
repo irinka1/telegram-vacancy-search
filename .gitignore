@@ -1,5 +1,7 @@
 ﻿node_modules/
 .env
+.env.*
+!/.env.example
 keys.env
 *.log
 .DS_Store

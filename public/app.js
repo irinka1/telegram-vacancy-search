@@ -13,6 +13,18 @@ function getChatIdFromQuery() {
   return params.get('chat_id') || '';
 }
 
+function getTelegramUserId() {
+  const userId = tg && tg.initDataUnsafe && tg.initDataUnsafe.user
+    ? tg.initDataUnsafe.user.id
+    : '';
+
+  return userId ? String(userId) : '';
+}
+
+function getTargetChatId() {
+  return getChatIdFromQuery() || getTelegramUserId();
+}
+
 form.addEventListener('submit', async (event) => {
   event.preventDefault();
 
@@ -30,17 +42,7 @@ form.addEventListener('submit', async (event) => {
 
   statusBox.textContent = 'Отправляю запрос боту...';
 
-  if (tg) {
-    tg.sendData(JSON.stringify(payload));
-    statusBox.textContent = 'Запрос отправлен. Результаты придут в чат.';
-
-    setTimeout(() => {
-      tg.close();
-    }, 1200);
-    return;
-  }
-
-  const chatId = getChatIdFromQuery();
+  const chatId = getTargetChatId();
   if (!chatId) {
     statusBox.textContent = 'Откройте форму по кнопке Старт в боте.';
     return;
@@ -59,6 +61,12 @@ form.addEventListener('submit', async (event) => {
     }
 
     statusBox.textContent = 'Готово. Результаты отправлены в ваш Telegram-чат.';
+
+    if (tg) {
+      setTimeout(() => {
+        tg.close();
+      }, 1200);
+    }
   } catch (error) {
     statusBox.textContent = error.message || 'Ошибка сети. Попробуйте снова.';
   }
