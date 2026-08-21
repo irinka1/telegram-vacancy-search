@@ -44,8 +44,7 @@ function getSearchPhrase(title, mode) {
 function getVacancySearchText(vacancy) {
   return cleanText([
     vacancy.title,
-    vacancy.description,
-    vacancy.detailsText
+    vacancy.description
   ].join(' ')).toLowerCase();
 }
 
