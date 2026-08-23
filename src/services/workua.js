@@ -82,33 +82,79 @@ function parseJobSection(bodyLines) {
   };
 }
 
-async function fetchWorkUaVacancies(phrase, timeoutMs = 20000) {
-  const searchUrl = `https://www.work.ua/jobs/?search=${encodeURIComponent(phrase)}`;
+function parsePage(markdown) {
+  const sections = splitMarkdownSections(markdown);
+  const vacancies = [];
 
+  for (const section of sections) {
+    const { title, url } = extractLinkFromTitleLine(section.titleLine);
+    if (!url || !/work\.ua\/jobs\/\d+\/?$/i.test(url)) continue;
+
+    const meta = parseJobSection(section.body);
+
+    vacancies.push({
+      title,
+      companyName: meta.companyName,
+      city: meta.city,
+      salary: meta.salary,
+      description: [title, meta.companyName, meta.detailsText].join(' '),
+      source: 'work.ua',
+      link: url
+    });
+  }
+
+  return vacancies;
+}
+
+async function fetchPages(buildUrl, pages, timeoutMs) {
+  const pageNumbers = Array.from({ length: pages }, (_, index) => index + 1);
+
+  const results = await Promise.allSettled(
+    pageNumbers.map((page) => fetchMirror(buildUrl(page), timeoutMs))
+  );
+
+  return results
+    .filter((result) => result.status === 'fulfilled')
+    .flatMap((result) => parsePage(result.value));
+}
+
+// Топ-1 страница поиска work.ua сильно смещена в сторону "гарячих"/офисных вакансий,
+// из-за чего вакансии с удалённим форматом часто просто не попадают в неё. Берём
+// несколько страниц параллельно, чтобы у фильтра по формату работы было из чего выбирать.
+async function fetchWorkUaVacancies(phrase, timeoutMs = 20000, pages = 5) {
   try {
-    const markdown = await fetchMirror(searchUrl, timeoutMs);
-    const sections = splitMarkdownSections(markdown);
+    const vacancies = await fetchPages(
+      (page) => `https://www.work.ua/jobs/?search=${encodeURIComponent(phrase)}${page > 1 ? `&page=${page}` : ''}`,
+      pages,
+      timeoutMs
+    );
 
-    const vacancies = [];
+    return uniqByLink(vacancies).slice(0, 60);
+  } catch {
+    return [];
+  }
+}
 
-    for (const section of sections) {
-      const { title, url } = extractLinkFromTitleLine(section.titleLine);
-      if (!url || !/work\.ua\/jobs\/\d+\/?$/i.test(url)) continue;
+// У work.ua есть отдельный раздел с вакансиями для удалённої роботи (jobs-remote),
+// но его собственный параметр ?search= вакансии не фильтрует (сайт просто игнорирует
+// текст запроса и отдаёт общий поток). Поэтому забираем несколько страниц этого раздела
+// (все вакансии там гарантированно удалённые) и уже сами фильтруем по названию должности —
+// так надёжнее, чем полагаться на текстовые ключевые слова "віддалено" в описании.
+async function fetchWorkUaRemoteVacancies(titleKeywords, timeoutMs = 20000, pages = 10) {
+  try {
+    const vacancies = await fetchPages(
+      (page) => `https://www.work.ua/jobs-remote/${page > 1 ? `?page=${page}` : ''}`,
+      pages,
+      timeoutMs
+    );
 
-      const meta = parseJobSection(section.body);
+    const keywords = titleKeywords.map((word) => word.toLowerCase());
+    const matched = vacancies.filter((vacancy) => {
+      const title = vacancy.title.toLowerCase();
+      return keywords.some((keyword) => title.includes(keyword));
+    });
 
-      vacancies.push({
-        title,
-        companyName: meta.companyName,
-        city: meta.city,
-        salary: meta.salary,
-        description: [title, meta.companyName, meta.detailsText].join(' '),
-        source: 'work.ua',
-        link: url
-      });
-    }
-
-    return uniqByLink(vacancies).slice(0, 6);
+    return uniqByLink(matched).slice(0, 30);
   } catch {
     return [];
   }
@@ -116,5 +162,6 @@ async function fetchWorkUaVacancies(phrase, timeoutMs = 20000) {
 
 module.exports = {
   getSearchPhrase,
-  fetchWorkUaVacancies
+  fetchWorkUaVacancies,
+  fetchWorkUaRemoteVacancies
 };
