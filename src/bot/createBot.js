@@ -1,6 +1,6 @@
 const { Telegraf } = require('telegraf');
 const { createRateLimiter } = require('../services/rateLimiter');
-const { searchVacancies } = require('../services/workua');
+const { searchVacancies } = require('../services/search');
 const { createVacancySubscriptions } = require('./subscriptions');
 
 function isHttpsUrl(url) {
@@ -26,6 +26,25 @@ async function safeReply(ctx, text, extra) {
   }
 }
 
+function formatWorkType(mode) {
+  if (mode === 'remote') return 'удаленная';
+  if (mode === 'part-time') return 'частичная занятость';
+  return 'любой';
+}
+
+const NEW_SEARCH_LABEL = '🔎 Новий пошук';
+const LIST_LABEL = '📋 Перелік вакансій, які вже у пошуку';
+const STOP_LABEL = '🛑 Зупинити пошук';
+const ADMIN_LIST_LABEL = '👥 Перелік вакансій (усі)';
+
+function queryLabel(payload) {
+  return `${payload.vacancyTitle} — ${formatWorkType(payload.workType)}`;
+}
+
+function isAdminChat(chatId, config) {
+  return Boolean(config.ADMIN_CHAT_ID) && String(chatId) === String(config.ADMIN_CHAT_ID);
+}
+
 function createBot({ config, logger = console }) {
   const bot = new Telegraf(config.BOT_TOKEN);
   const limiter = createRateLimiter({
@@ -40,6 +59,26 @@ function createBot({ config, logger = console }) {
     searchVacancies,
     logger
   });
+
+  function buildMenuKeyboard(chatId) {
+    const rows = [
+      [NEW_SEARCH_LABEL],
+      [LIST_LABEL],
+      [STOP_LABEL]
+    ];
+
+    if (isAdminChat(chatId, config)) {
+      rows.push([ADMIN_LIST_LABEL]);
+    }
+
+    return {
+      reply_markup: {
+        keyboard: rows,
+        resize_keyboard: true,
+        is_persistent: true
+      }
+    };
+  }
 
   bot.use(async (ctx, next) => {
     const chatId = ctx.chat?.id;
@@ -88,24 +127,27 @@ function createBot({ config, logger = console }) {
           inline_keyboard: [[startButton(ctx.chat.id)]]
         }
       });
-      return;
+    } else {
+      const fallbackUrl = appendChatId(miniappUrl, ctx.chat.id);
+      await ctx.reply(
+        `${text}\n\n` +
+        `Сейчас у вас локальный URL, поэтому Telegram не может показать кнопку.\n` +
+        `Откройте ссылку вручную:\n${fallbackUrl}\n\n` +
+        `Если открываете с телефона, localhost не будет работать. Нужен публичный HTTPS URL.`
+      );
     }
 
-    const fallbackUrl = appendChatId(miniappUrl, ctx.chat.id);
-    await ctx.reply(
-      `${text}\n\n` +
-      `Сейчас у вас локальный URL, поэтому Telegram не может показать кнопку.\n` +
-      `Откройте ссылку вручную:\n${fallbackUrl}\n\n` +
-      `Если открываете с телефона, localhost не будет работать. Нужен публичный HTTPS URL.`
-    );
+    await ctx.reply('Меню:', buildMenuKeyboard(ctx.chat.id));
   }
+
+  subscriptions.restore();
 
   async function sendSearchResults(chatId, payload) {
     const title = payload.vacancyTitle || 'бухгалтер';
     const mode = payload.workType || 'remote';
     const telegramUsername = payload.telegramUsername || '';
 
-    await bot.telegram.sendMessage(chatId, 'Ищу вакансии, это займет до 20 секунд...');
+    await bot.telegram.sendMessage(chatId, 'Ищу вакансии, это займет до минуты...');
 
     const vacancies = await searchVacancies({ title, mode });
     subscriptions.start(chatId, {
@@ -114,15 +156,25 @@ function createBot({ config, logger = console }) {
       telegramUsername
     }, vacancies);
 
+    if (config.ADMIN_CHAT_ID) {
+      const requester = telegramUsername ? `@${telegramUsername}` : `chat_id ${chatId}`;
+      bot.telegram.sendMessage(
+        config.ADMIN_CHAT_ID,
+        `Новый поиск вакансий от ${requester}:\n- ${title} — ${formatWorkType(mode)}`
+      ).catch((error) => {
+        logger.error('Ошибка отправки уведомления администратору:', error);
+      });
+    }
+
     if (!vacancies.length) {
       await bot.telegram.sendMessage(
         chatId,
-        `По запросу "${title}" ничего не найдено на work.ua. Попробуйте другое название вакансии.`
+        `По запросу "${title}" ничего не найдено. Попробуйте другое название вакансии.`
       );
 
       await bot.telegram.sendMessage(
         chatId,
-        `Я продолжу проверять work.ua ${Math.max(1, Math.round(config.VACANCY_POLL_INTERVAL_MS / 60000))} мин. и пришлю новые вакансии, если они появятся.`
+        `Я продолжу проверять новые вакансии каждые ${Math.max(1, Math.round(config.VACANCY_POLL_INTERVAL_MS / 60000))} мин. и пришлю их, если они появятся.`
       );
       return;
     }
@@ -130,7 +182,7 @@ function createBot({ config, logger = console }) {
     const header = [
       'Найденные вакансии:',
       `Запрос: ${title}`,
-      `Формат: ${mode === 'remote' ? 'удаленная' : mode === 'part-time' ? 'частичная занятость' : 'любой'}`,
+      `Формат: ${formatWorkType(mode)}`,
       `Telegram пользователя: ${telegramUsername || 'не указан'}`
     ].join('\n');
 
@@ -142,6 +194,7 @@ function createBot({ config, logger = console }) {
         `Фирма: ${vacancies[i].companyName}`,
         `Город: ${vacancies[i].city}`,
         `Зарплата: ${vacancies[i].salary}`,
+        `Источник: ${vacancies[i].source}`,
         `Ссылка: ${vacancies[i].link || 'не указана'}`
       ].join('\n'), {
         disable_web_page_preview: false
@@ -150,7 +203,7 @@ function createBot({ config, logger = console }) {
 
     await bot.telegram.sendMessage(
       chatId,
-      `Автообновление включено. Я буду проверять новые вакансии каждые ${Math.max(1, Math.round(config.VACANCY_POLL_INTERVAL_MS / 60000))} мин. Остановить можно командой /stop_updates.`
+      `Автообновление включено. Я буду проверять новые вакансии каждые ${Math.max(1, Math.round(config.VACANCY_POLL_INTERVAL_MS / 60000))} мин. Остановить можно кнопкой "${STOP_LABEL}".`
     );
   }
 
@@ -174,6 +227,57 @@ function createBot({ config, logger = console }) {
 
     subscriptions.stop(ctx.chat.id);
     await ctx.reply('Автообновление вакансий остановлено.');
+  });
+
+  bot.hears(NEW_SEARCH_LABEL, async (ctx) => {
+    const text = isHttpsUrl(getMiniappUrl())
+      ? 'Открой миниапп и заполни параметры поиска вакансий:'
+      : 'Открой форму по кнопке Старт. Для localhost откроется безопасный режим через ссылку:';
+
+    await sendStartMessage(ctx, text);
+  });
+
+  bot.hears(LIST_LABEL, async (ctx) => {
+    const payload = subscriptions.get(ctx.chat.id);
+
+    if (!payload) {
+      await ctx.reply('Сейчас нет активных поисков.');
+      return;
+    }
+
+    await ctx.reply(`Сейчас отслеживается:\n1. ${queryLabel(payload)}`);
+  });
+
+  bot.hears(STOP_LABEL, async (ctx) => {
+    if (!subscriptions.has(ctx.chat.id)) {
+      await ctx.reply('Сейчас нет активных поисков, нечего останавливать.');
+      return;
+    }
+
+    subscriptions.stop(ctx.chat.id);
+    await ctx.reply('Автообновление вакансий остановлено.', buildMenuKeyboard(ctx.chat.id));
+  });
+
+  bot.hears(ADMIN_LIST_LABEL, async (ctx) => {
+    if (!isAdminChat(ctx.chat.id, config)) return;
+
+    const active = subscriptions.getAll();
+
+    if (!active.length) {
+      await ctx.reply('Сейчас нет активных поисков ни у одного пользователя.');
+      return;
+    }
+
+    const list = active
+      .map((subscription, index) => {
+        const requester = subscription.payload.telegramUsername
+          ? `@${subscription.payload.telegramUsername}`
+          : `chat_id ${subscription.chatId}`;
+        return `${index + 1}. ${queryLabel(subscription.payload)} — ${requester}`;
+      })
+      .join('\n');
+
+    await ctx.reply(`Активні пошуки (усі користувачі):\n${list}`);
   });
 
   bot.on('message', async (ctx) => {

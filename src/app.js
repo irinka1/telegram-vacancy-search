@@ -1,6 +1,7 @@
 const { loadEnv } = require('./config/env');
 const { createBot } = require('./bot/createBot');
 const { createApp } = require('./server/createApp');
+const { closeRobotaBrowser } = require('./services/search');
 
 async function startTelegramTransport(bot) {
   await bot.telegram.deleteWebhook({ drop_pending_updates: true });
@@ -39,11 +40,12 @@ async function main() {
 
   const shutdown = async (signal) => {
     try {
-      subscriptions.stopAll();
+      subscriptions.haltIntervals();
       await bot.stop(signal);
     } catch (error) {
       console.error('Ошибка остановки Telegram бота:', error);
     } finally {
+      await closeRobotaBrowser();
       server.close();
     }
   };

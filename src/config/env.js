@@ -44,6 +44,7 @@ function loadEnv() {
     RATE_LIMIT_WINDOW_MS: Number(getValue('RATE_LIMIT_WINDOW_MS', '60000')),
     RATE_LIMIT_MAX: Number(getValue('RATE_LIMIT_MAX', '20')),
     BAN_DURATION_MS: Number(getValue('BAN_DURATION_MS', '3600000')),
+    ADMIN_CHAT_ID: getValue('ADMIN_CHAT_ID', ''),
     WEBHOOK_PATH: '/telegram/webhook'
   };
 }
