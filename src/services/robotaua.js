@@ -76,7 +76,16 @@ function parseVacancyCard(card) {
   };
 }
 
-async function fetchRobotaUaVacancies(phrase, timeoutMs = 20000, limit = 6) {
+function withTimeout(promise, ms) {
+  let timer;
+  const timeout = new Promise((_, reject) => {
+    timer = setTimeout(() => reject(new Error('timeout')), ms);
+  });
+
+  return Promise.race([promise, timeout]).finally(() => clearTimeout(timer));
+}
+
+async function fetchRobotaUaVacanciesInner(phrase, timeoutMs, limit) {
   let page;
 
   try {
@@ -114,8 +123,21 @@ async function fetchRobotaUaVacancies(phrase, timeoutMs = 20000, limit = 6) {
     return [];
   } finally {
     if (page) {
-      await page.close().catch(() => {});
+      // page.close() иногда зависает навсегда под нагрузкой (осиротевший renderer-процесс
+      // Chrome) — без своего таймаута это молча блокирует весь цикл автообновления вакансий.
+      withTimeout(page.close(), 5000).catch(() => {});
     }
+  }
+}
+
+// Любой шаг Puppeteer может зависнуть без ошибки и без таймаута, если сам процесс Chrome
+// стал нездоров. Внешний таймаут гарантирует, что поиск по robota.ua всегда завершится —
+// успехом или пустым результатом — и не заблокирует навсегда всю подписку.
+async function fetchRobotaUaVacancies(phrase, timeoutMs = 20000, limit = 15) {
+  try {
+    return await withTimeout(fetchRobotaUaVacanciesInner(phrase, timeoutMs, limit), timeoutMs + 15000);
+  } catch {
+    return [];
   }
 }
 

@@ -8,6 +8,15 @@ function getVacancyKey(vacancy) {
   return vacancy.link || `${vacancy.title}|${vacancy.companyName}|${vacancy.city}|${vacancy.salary}`;
 }
 
+function withTimeout(promise, ms) {
+  let timer;
+  const timeout = new Promise((_, reject) => {
+    timer = setTimeout(() => reject(new Error('subscription tick timeout')), ms);
+  });
+
+  return Promise.race([promise, timeout]).finally(() => clearTimeout(timer));
+}
+
 function createVacancySubscriptions({ bot, intervalMs, searchVacancies, logger = console }) {
   const subscriptions = new Map();
 
@@ -56,10 +65,10 @@ function createVacancySubscriptions({ bot, intervalMs, searchVacancies, logger =
       subscription.isRunning = true;
 
       try {
-        const vacancies = await searchVacancies({
+        const vacancies = await withTimeout(searchVacancies({
           title: subscription.payload.vacancyTitle,
           mode: subscription.payload.workType
-        });
+        }), 5 * 60 * 1000);
 
         const freshVacancies = vacancies.filter((vacancy) => {
           const vacancyKey = getVacancyKey(vacancy);
