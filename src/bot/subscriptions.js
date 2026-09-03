@@ -8,6 +8,10 @@ function getVacancyKey(vacancy) {
   return vacancy.link || `${vacancy.title}|${vacancy.companyName}|${vacancy.city}|${vacancy.salary}`;
 }
 
+function queryKey(query) {
+  return `${query.vacancyTitle}|${query.workType}`;
+}
+
 function withTimeout(promise, ms) {
   let timer;
   const timeout = new Promise((_, reject) => {
@@ -15,6 +19,26 @@ function withTimeout(promise, ms) {
   });
 
   return Promise.race([promise, timeout]).finally(() => clearTimeout(timer));
+}
+
+// Старый формат (до многозапросного поиска) хранил один запрос прямо в payload:
+// { vacancyTitle, workType, telegramUsername }. Приводим его к новому виду
+// { queries: [...], telegramUsername }, чтобы старые подписки не терялись при обновлении.
+function normalizeLegacyPayload(payload) {
+  if (!payload) return { queries: [], telegramUsername: '' };
+
+  if (Array.isArray(payload.queries)) {
+    return { queries: payload.queries, telegramUsername: payload.telegramUsername || '' };
+  }
+
+  if (payload.vacancyTitle) {
+    return {
+      queries: [{ vacancyTitle: payload.vacancyTitle, workType: payload.workType || 'remote' }],
+      telegramUsername: payload.telegramUsername || ''
+    };
+  }
+
+  return { queries: [], telegramUsername: '' };
 }
 
 function createVacancySubscriptions({ bot, intervalMs, searchVacancies, logger = console }) {
@@ -25,7 +49,8 @@ function createVacancySubscriptions({ bot, intervalMs, searchVacancies, logger =
       fs.mkdirSync(path.dirname(STORE_PATH), { recursive: true });
       const data = Array.from(subscriptions.values()).map((subscription) => ({
         chatId: subscription.chatId,
-        payload: subscription.payload,
+        telegramUsername: subscription.telegramUsername,
+        payload: { queries: subscription.payload.queries },
         seenKeys: Array.from(subscription.seenKeys)
       }));
       fs.writeFileSync(STORE_PATH, JSON.stringify(data), 'utf8');
@@ -46,13 +71,12 @@ function createVacancySubscriptions({ bot, intervalMs, searchVacancies, logger =
     }
   }
 
-  function createSubscription(chatId, payload, seenKeys) {
+  function createSubscription(chatId, telegramUsername, queries, seenKeys) {
     const subscription = {
       chatId,
+      telegramUsername: telegramUsername || '',
       payload: {
-        vacancyTitle: payload.vacancyTitle || 'бухгалтер',
-        workType: payload.workType || 'remote',
-        telegramUsername: payload.telegramUsername || ''
+        queries: queries.length ? queries : [{ vacancyTitle: 'бухгалтер', workType: 'remote' }]
       },
       seenKeys,
       isRunning: false,
@@ -65,12 +89,15 @@ function createVacancySubscriptions({ bot, intervalMs, searchVacancies, logger =
       subscription.isRunning = true;
 
       try {
-        const vacancies = await withTimeout(searchVacancies({
-          title: subscription.payload.vacancyTitle,
-          mode: subscription.payload.workType
-        }), 5 * 60 * 1000);
+        const resultsPerQuery = await withTimeout(
+          Promise.all(subscription.payload.queries.map((query) => searchVacancies({
+            title: query.vacancyTitle,
+            mode: query.workType
+          }))),
+          5 * 60 * 1000
+        );
 
-        const freshVacancies = vacancies.filter((vacancy) => {
+        const freshVacancies = resultsPerQuery.flat().filter((vacancy) => {
           const vacancyKey = getVacancyKey(vacancy);
           if (subscription.seenKeys.has(vacancyKey)) {
             return false;
@@ -87,7 +114,7 @@ function createVacancySubscriptions({ bot, intervalMs, searchVacancies, logger =
         await sendVacancyList(
           chatId,
           freshVacancies,
-          `Появились новые вакансии по запросу "${subscription.payload.vacancyTitle}".`
+          'Появились новые вакансии по вашим запросам.'
         );
       } catch (error) {
         logger.error('Ошибка автообновления вакансий:', error);
@@ -125,13 +152,36 @@ function createVacancySubscriptions({ bot, intervalMs, searchVacancies, logger =
     }
   }
 
-  function start(chatId, payload, knownVacancies) {
+  // Добавляет новый запрос к уже отслеживаемым (не заменяет их). Возвращает итоговый
+  // список запросов и признак того, был ли этот конкретный запрос новым.
+  function addQuery(chatId, query, telegramUsername) {
     const key = String(chatId);
-    stop(key);
+    const existing = subscriptions.get(key);
+    const existingQueries = existing ? existing.payload.queries : [];
 
-    const seenKeys = new Set((knownVacancies || []).map(getVacancyKey));
-    const subscription = createSubscription(chatId, payload, seenKeys);
+    const alreadyTracked = existingQueries.some((item) => queryKey(item) === queryKey(query));
+    const queries = alreadyTracked ? existingQueries : [...existingQueries, query];
+    const seenKeys = existing ? existing.seenKeys : new Set();
+    const resolvedUsername = telegramUsername || (existing ? existing.telegramUsername : '');
+
+    if (existing) {
+      clearInterval(existing.intervalId);
+    }
+
+    const subscription = createSubscription(chatId, resolvedUsername, queries, seenKeys);
     subscriptions.set(key, subscription);
+    persist();
+
+    return { added: !alreadyTracked, queries };
+  }
+
+  // Отмечает вакансии как уже показанные пользователю, чтобы часовая проверка
+  // не прислала их повторно как "новые".
+  function markSeen(chatId, vacancies) {
+    const subscription = subscriptions.get(String(chatId));
+    if (!subscription) return;
+
+    vacancies.forEach((vacancy) => subscription.seenKeys.add(getVacancyKey(vacancy)));
     persist();
   }
 
@@ -150,30 +200,58 @@ function createVacancySubscriptions({ bot, intervalMs, searchVacancies, logger =
 
       const key = String(entry.chatId);
       const seenKeys = new Set(entry.seenKeys || []);
-      const subscription = createSubscription(entry.chatId, entry.payload || {}, seenKeys);
+      const normalized = normalizeLegacyPayload({
+        ...entry.payload,
+        telegramUsername: entry.telegramUsername || entry.payload?.telegramUsername
+      });
+      const subscription = createSubscription(entry.chatId, normalized.telegramUsername, normalized.queries, seenKeys);
       subscriptions.set(key, subscription);
     }
+
+    // Сразу пересохраняем в новом формате, чтобы миграция произошла один раз.
+    persist();
   }
 
-  function get(chatId) {
+  function getQueries(chatId) {
     const subscription = subscriptions.get(String(chatId));
-    return subscription ? subscription.payload : null;
+    return subscription ? subscription.payload.queries : [];
+  }
+
+  function removeQuery(chatId, query) {
+    const key = String(chatId);
+    const subscription = subscriptions.get(key);
+    if (!subscription) return;
+
+    const remaining = subscription.payload.queries.filter(
+      (item) => queryKey(item) !== queryKey(query)
+    );
+
+    if (!remaining.length) {
+      stop(chatId);
+      return;
+    }
+
+    subscription.payload.queries = remaining;
+    persist();
   }
 
   function getAll() {
     return Array.from(subscriptions.values()).map((subscription) => ({
       chatId: subscription.chatId,
-      payload: subscription.payload
+      telegramUsername: subscription.telegramUsername,
+      queries: subscription.payload.queries
     }));
   }
 
   return {
-    start,
+    addQuery,
+    markSeen,
     stop,
     stopAll,
     haltIntervals,
     restore,
-    get,
+    getQueries,
+    removeQuery,
     getAll,
     has(chatId) {
       return subscriptions.has(String(chatId));
