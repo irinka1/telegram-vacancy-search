@@ -31,6 +31,7 @@ form.addEventListener('submit', async (event) => {
   const formData = new FormData(form);
   const payload = {
     vacancyTitle: (formData.get('vacancyTitle') || '').toString().trim(),
+    city: (formData.get('city') || '').toString().trim(),
     workType: (formData.get('workType') || 'remote').toString(),
     telegramUsername: (formData.get('telegramUsername') || '').toString().trim()
   };

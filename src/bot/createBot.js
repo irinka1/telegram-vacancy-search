@@ -49,7 +49,8 @@ const CANCEL_LABEL = '↩️ Скасувати';
 const ADMIN_LIST_LABEL = '👥 Перелік вакансій (усі)';
 
 function queryLabel(query) {
-  return `${query.vacancyTitle} — ${formatWorkType(query.workType)}`;
+  const cityPart = query.city ? `${query.city}, ` : '';
+  return `${query.vacancyTitle} — ${cityPart}${formatWorkType(query.workType)}`;
 }
 
 function isAdminChat(chatId, config) {
@@ -158,8 +159,9 @@ function createBot({ config, logger = console }) {
   async function sendSearchResults(chatId, payload) {
     const title = payload.vacancyTitle || 'бухгалтер';
     const mode = payload.workType || 'remote';
+    const city = (payload.city || '').toString().trim();
     const telegramUsername = payload.telegramUsername || '';
-    const newQuery = { vacancyTitle: title, workType: mode };
+    const newQuery = { vacancyTitle: title, workType: mode, city };
 
     await bot.telegram.sendMessage(chatId, 'Ищу вакансии, это займет до минуты...');
 
@@ -169,7 +171,7 @@ function createBot({ config, logger = console }) {
       const requester = telegramUsername ? `@${telegramUsername}` : `chat_id ${chatId}`;
       bot.telegram.sendMessage(
         config.ADMIN_CHAT_ID,
-        `Новый поиск вакансий от ${requester}:\n- ${title} — ${formatWorkType(mode)}`
+        `Новый поиск вакансий от ${requester}:\n- ${queryLabel(newQuery)}`
       ).catch((error) => {
         logger.error('Ошибка отправки уведомления администратору:', error);
       });
@@ -178,7 +180,7 @@ function createBot({ config, logger = console }) {
     // Считаем результаты сразу по ВСЕМ активным запросам (старым и новому)
     // и присылаем общий список — а не только то, что нашлось по новому запросу.
     const resultsPerQuery = await Promise.all(
-      queries.map((query) => searchVacancies({ title: query.vacancyTitle, mode: query.workType }))
+      queries.map((query) => searchVacancies({ title: query.vacancyTitle, mode: query.workType, city: query.city }))
     );
     const combined = uniqByLink(resultsPerQuery.flat());
 

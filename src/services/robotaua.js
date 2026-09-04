@@ -46,12 +46,13 @@ async function closeRobotaBrowser() {
   }
 }
 
-function buildVacancyUrl(phrase) {
+function buildVacancyUrl(phrase, city) {
   const part = encodeURIComponent(cleanText(phrase) || 'робота');
-  return `https://robota.ua/zapros/${part}/ukraine`;
+  const cityPart = encodeURIComponent(cleanText(city) || 'ukraine');
+  return `https://robota.ua/zapros/${part}/${cityPart}`;
 }
 
-function parseVacancyCard(card) {
+function parseVacancyCard(card, city) {
   const title = cleanText(card.title);
   if (!title) return null;
 
@@ -68,7 +69,7 @@ function parseVacancyCard(card) {
   return {
     title,
     companyName,
-    city: 'Україна',
+    city: cleanText(city) || 'Україна',
     salary,
     description: [title, companyName].join(' '),
     source: 'robota.ua',
@@ -85,14 +86,14 @@ function withTimeout(promise, ms) {
   return Promise.race([promise, timeout]).finally(() => clearTimeout(timer));
 }
 
-async function fetchRobotaUaVacanciesInner(phrase, timeoutMs, limit) {
+async function fetchRobotaUaVacanciesInner(phrase, timeoutMs, limit, city) {
   let page;
 
   try {
     const browser = await getBrowser();
     page = await browser.newPage();
     await page.setUserAgent('Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0 Safari/537.36');
-    await page.goto(buildVacancyUrl(phrase), { waitUntil: 'domcontentloaded', timeout: timeoutMs });
+    await page.goto(buildVacancyUrl(phrase, city), { waitUntil: 'domcontentloaded', timeout: timeoutMs });
 
     try {
       await page.waitForSelector('a[href*="/vacancy"]', { timeout: Math.min(timeoutMs, 8000) });
@@ -117,7 +118,7 @@ async function fetchRobotaUaVacanciesInner(phrase, timeoutMs, limit) {
     });
 
     return uniqByLink(
-      rawCards.map((card) => parseVacancyCard(card)).filter(Boolean)
+      rawCards.map((card) => parseVacancyCard(card, city)).filter(Boolean)
     ).slice(0, limit);
   } catch {
     return [];
@@ -133,9 +134,9 @@ async function fetchRobotaUaVacanciesInner(phrase, timeoutMs, limit) {
 // Любой шаг Puppeteer может зависнуть без ошибки и без таймаута, если сам процесс Chrome
 // стал нездоров. Внешний таймаут гарантирует, что поиск по robota.ua всегда завершится —
 // успехом или пустым результатом — и не заблокирует навсегда всю подписку.
-async function fetchRobotaUaVacancies(phrase, timeoutMs = 20000, limit = 15) {
+async function fetchRobotaUaVacancies(phrase, timeoutMs = 20000, limit = 15, city = '') {
   try {
-    return await withTimeout(fetchRobotaUaVacanciesInner(phrase, timeoutMs, limit), timeoutMs + 15000);
+    return await withTimeout(fetchRobotaUaVacanciesInner(phrase, timeoutMs, limit, city), timeoutMs + 15000);
   } catch {
     return [];
   }

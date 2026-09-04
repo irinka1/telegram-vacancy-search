@@ -38,7 +38,7 @@ function createApp({ bot, config, sendSearchResults, logger = console }) {
         return res.status(429).json({ ok: false, error: 'Слишком много запросов. Попробуйте позже.' });
       }
 
-      const { vacancyTitle, workType, telegramUsername, chatId } = req.body || {};
+      const { vacancyTitle, city, workType, telegramUsername, chatId } = req.body || {};
       const numericChatId = Number(chatId);
 
       if (!Number.isFinite(numericChatId)) {
@@ -47,6 +47,7 @@ function createApp({ bot, config, sendSearchResults, logger = console }) {
 
       await sendSearchResults(numericChatId, {
         vacancyTitle,
+        city,
         workType,
         telegramUsername
       });

@@ -9,7 +9,7 @@ function getVacancyKey(vacancy) {
 }
 
 function queryKey(query) {
-  return `${query.vacancyTitle}|${query.workType}`;
+  return `${query.vacancyTitle}|${query.workType}|${query.city || ''}`;
 }
 
 function withTimeout(promise, ms) {
@@ -33,7 +33,7 @@ function normalizeLegacyPayload(payload) {
 
   if (payload.vacancyTitle) {
     return {
-      queries: [{ vacancyTitle: payload.vacancyTitle, workType: payload.workType || 'remote' }],
+      queries: [{ vacancyTitle: payload.vacancyTitle, workType: payload.workType || 'remote', city: payload.city || '' }],
       telegramUsername: payload.telegramUsername || ''
     };
   }
@@ -92,7 +92,8 @@ function createVacancySubscriptions({ bot, intervalMs, searchVacancies, logger =
         const resultsPerQuery = await withTimeout(
           Promise.all(subscription.payload.queries.map((query) => searchVacancies({
             title: query.vacancyTitle,
-            mode: query.workType
+            mode: query.workType,
+            city: query.city
           }))),
           5 * 60 * 1000
         );

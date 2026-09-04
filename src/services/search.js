@@ -46,9 +46,14 @@ function finalize(vacancies) {
   }));
 }
 
-async function searchVacancies({ title, mode }) {
+async function searchVacancies({ title, mode, city }) {
   const baseTitle = cleanText(title) || 'бухгалтер';
+  const cityText = cleanText(city);
   const variants = expandGenderVariants(baseTitle);
+
+  // work.ua и robota.ua одинаково понимают "Киев" и "Київ" — отдельный перевод
+  // города не нужен, достаточно передать его как есть.
+  const phraseFor = (variantTitle) => getSearchPhrase(cityText ? `${variantTitle} ${cityText}` : variantTitle, 'any');
 
   if (mode === 'remote') {
     // Раздел work.ua "робота дистанційно" игнорирует свой же параметр поиска, поэтому
@@ -60,9 +65,9 @@ async function searchVacancies({ title, mode }) {
 
     const [workUaRemoteCategory, workUaGeneralFiltered, robotaUa] = await Promise.all([
       fetchWorkUaRemoteVacancies(titleKeywords),
-      Promise.all(variants.map((variantTitle) => fetchWorkUaVacancies(getSearchPhrase(variantTitle, 'any'))))
+      Promise.all(variants.map((variantTitle) => fetchWorkUaVacancies(phraseFor(variantTitle))))
         .then((r) => filterByMode(r.flat(), 'remote')),
-      Promise.all(variants.map((variantTitle) => fetchRobotaUaVacancies(getSearchPhrase(variantTitle, 'any')))).then((r) => r.flat())
+      Promise.all(variants.map((variantTitle) => fetchRobotaUaVacancies(getSearchPhrase(variantTitle, 'any'), undefined, undefined, cityText))).then((r) => r.flat())
     ]);
 
     // robota.ua не даёт такого же серверного фильтра, поэтому для неё оставляем
@@ -73,12 +78,11 @@ async function searchVacancies({ title, mode }) {
 
   // Для остальных режимов не сужаем сам поисковый запрос словами формата работы —
   // сайты трактуют это как часть фразы и находят почти ничего. Ищем по названию
-  // должности как есть, а формат работы отфильтровываем ниже по полному описанию.
+  // должности (+ городу, если указан), а формат работы отфильтровываем по описанию.
   const perVariant = await Promise.all(variants.map(async (variantTitle) => {
-    const phrase = getSearchPhrase(variantTitle, 'any');
     const [workUa, robotaUa] = await Promise.all([
-      fetchWorkUaVacancies(phrase),
-      fetchRobotaUaVacancies(phrase)
+      fetchWorkUaVacancies(phraseFor(variantTitle)),
+      fetchRobotaUaVacancies(getSearchPhrase(variantTitle, 'any'), undefined, undefined, cityText)
     ]);
 
     return [...workUa, ...robotaUa];
